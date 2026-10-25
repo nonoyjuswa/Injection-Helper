@@ -1,1 +1,223 @@
 No errors logged yet.
+
+[2026-10-22T15:04:56] generation: C:\Users\Juswa\Documents\Thesis\DATASETS\Automated Injection\Output
+No background has a complete profile. Mark the tabletop corners AND enter the real table size for at least one background (tab 1).
+Traceback (most recent call last):
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 603, in run
+    self._run()
+    ~~~~~~~~~^^
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 633, in _run
+    raise ValueError('No background has a complete profile. Mark the tabletop corners AND enter the '
+                     'real table size for at least one background (tab 1).')
+ValueError: No background has a complete profile. Mark the tabletop corners AND enter the real table size for at least one background (tab 1).
+
+
+[2026-10-22T15:08:13] test placement: 
+Could not place card_04.png (8.6 x 5.4 cm) on the 34 x 15 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+Traceback (most recent call last):
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 780, in reroll
+    self.img, infos = self.make_fn()
+                      ~~~~~~~~~~~~^^
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 1314, in make
+    return compose_image(self.path, prof, chosen, opt['sizes'], opt, rng)
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 520, in compose_image
+    raise PlacementError(f'Could not place {mp.name} ({w:.1f} x {h:.1f} cm) on the {tw:g} x {td:g} cm '
+                         f'area without overlaps. Shrink obstacle zones, lower "mock-ups per image" '
+                         f'or the spacing.')
+PlacementError: Could not place card_04.png (8.6 x 5.4 cm) on the 34 x 15 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+
+
+[2026-10-22T15:08:20] test placement: 
+Could not place card_15.webp (8.6 x 5.4 cm) on the 34 x 20 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+Traceback (most recent call last):
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 780, in reroll
+    self.img, infos = self.make_fn()
+                      ~~~~~~~~~~~~^^
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 1314, in make
+    return compose_image(self.path, prof, chosen, opt['sizes'], opt, rng)
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 520, in compose_image
+    raise PlacementError(f'Could not place {mp.name} ({w:.1f} x {h:.1f} cm) on the {tw:g} x {td:g} cm '
+                         f'area without overlaps. Shrink obstacle zones, lower "mock-ups per image" '
+                         f'or the spacing.')
+PlacementError: Could not place card_15.webp (8.6 x 5.4 cm) on the 34 x 20 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+
+
+[2026-10-25T12:45:16] test placement: 
+Could not place BirthCertificate_21_Injection_Crop.jpg (27.9 x 21.6 cm) on the 56 x 69.5 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+Traceback (most recent call last):
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 852, in reroll
+    self.img, infos = self.make_fn()
+                      ~~~~~~~~~~~~^^
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 1387, in make
+    return compose_image(self.path, prof, chosen, opt['sizes'], opt, rng)
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 574, in compose_image
+    raise PlacementError(f'Could not place {mp.name} ({w:.1f} x {h:.1f} cm) on the {tw:g} x {td:g} cm '
+                         f'area without overlaps. Shrink obstacle zones, lower "mock-ups per image" '
+                         f'or the spacing.')
+PlacementError: Could not place BirthCertificate_21_Injection_Crop.jpg (27.9 x 21.6 cm) on the 56 x 69.5 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+
+
+[2026-10-25T12:45:20] test placement: 
+Could not place moa12.jpg (21.6 x 27.9 cm) on the 56 x 69.5 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+Traceback (most recent call last):
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 852, in reroll
+    self.img, infos = self.make_fn()
+                      ~~~~~~~~~~~~^^
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 1387, in make
+    return compose_image(self.path, prof, chosen, opt['sizes'], opt, rng)
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 574, in compose_image
+    raise PlacementError(f'Could not place {mp.name} ({w:.1f} x {h:.1f} cm) on the {tw:g} x {td:g} cm '
+                         f'area without overlaps. Shrink obstacle zones, lower "mock-ups per image" '
+                         f'or the spacing.')
+PlacementError: Could not place moa12.jpg (21.6 x 27.9 cm) on the 56 x 69.5 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+
+
+[2026-10-25T12:45:32] test placement: 
+Could not place moa13.jpg (21.6 x 27.9 cm) on the 71 x 54 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+Traceback (most recent call last):
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 852, in reroll
+    self.img, infos = self.make_fn()
+                      ~~~~~~~~~~~~^^
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 1387, in make
+    return compose_image(self.path, prof, chosen, opt['sizes'], opt, rng)
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 574, in compose_image
+    raise PlacementError(f'Could not place {mp.name} ({w:.1f} x {h:.1f} cm) on the {tw:g} x {td:g} cm '
+                         f'area without overlaps. Shrink obstacle zones, lower "mock-ups per image" '
+                         f'or the spacing.')
+PlacementError: Could not place moa13.jpg (21.6 x 27.9 cm) on the 71 x 54 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+
+
+[2026-10-25T12:45:40] test placement: 
+Could not place 5.jpg (21.6 x 27.9 cm) on the 71 x 54 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+Traceback (most recent call last):
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 852, in reroll
+    self.img, infos = self.make_fn()
+                      ~~~~~~~~~~~~^^
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 1387, in make
+    return compose_image(self.path, prof, chosen, opt['sizes'], opt, rng)
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 574, in compose_image
+    raise PlacementError(f'Could not place {mp.name} ({w:.1f} x {h:.1f} cm) on the {tw:g} x {td:g} cm '
+                         f'area without overlaps. Shrink obstacle zones, lower "mock-ups per image" '
+                         f'or the spacing.')
+PlacementError: Could not place 5.jpg (21.6 x 27.9 cm) on the 71 x 54 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+
+
+[2026-10-25T12:45:45] test placement: 
+Could not place moa30.jpg (21.6 x 27.9 cm) on the 71 x 54 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+Traceback (most recent call last):
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 852, in reroll
+    self.img, infos = self.make_fn()
+                      ~~~~~~~~~~~~^^
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 1387, in make
+    return compose_image(self.path, prof, chosen, opt['sizes'], opt, rng)
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 574, in compose_image
+    raise PlacementError(f'Could not place {mp.name} ({w:.1f} x {h:.1f} cm) on the {tw:g} x {td:g} cm '
+                         f'area without overlaps. Shrink obstacle zones, lower "mock-ups per image" '
+                         f'or the spacing.')
+PlacementError: Could not place moa30.jpg (21.6 x 27.9 cm) on the 71 x 54 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+
+
+[2026-10-25T12:46:11] test placement: 
+Could not place moa30.jpg (21.6 x 27.9 cm) on the 71 x 54 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+Traceback (most recent call last):
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 852, in reroll
+    self.img, infos = self.make_fn()
+                      ~~~~~~~~~~~~^^
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 1387, in make
+    return compose_image(self.path, prof, chosen, opt['sizes'], opt, rng)
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 574, in compose_image
+    raise PlacementError(f'Could not place {mp.name} ({w:.1f} x {h:.1f} cm) on the {tw:g} x {td:g} cm '
+                         f'area without overlaps. Shrink obstacle zones, lower "mock-ups per image" '
+                         f'or the spacing.')
+PlacementError: Could not place moa30.jpg (21.6 x 27.9 cm) on the 71 x 54 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+
+
+[2026-10-25T14:22:16] test placement: 
+Could not place moa14.jpg (21.6 x 27.9 cm) on the 85 x 44.5 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+Traceback (most recent call last):
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 852, in reroll
+    self.img, infos = self.make_fn()
+                      ~~~~~~~~~~~~^^
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 1387, in make
+    return compose_image(self.path, prof, chosen, opt['sizes'], opt, rng)
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 574, in compose_image
+    raise PlacementError(f'Could not place {mp.name} ({w:.1f} x {h:.1f} cm) on the {tw:g} x {td:g} cm '
+                         f'area without overlaps. Shrink obstacle zones, lower "mock-ups per image" '
+                         f'or the spacing.')
+PlacementError: Could not place moa14.jpg (21.6 x 27.9 cm) on the 85 x 44.5 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+
+
+[2026-10-25T14:22:19] test placement: 
+Could not place moa26.jpg (21.6 x 27.9 cm) on the 85 x 44.5 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+Traceback (most recent call last):
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 852, in reroll
+    self.img, infos = self.make_fn()
+                      ~~~~~~~~~~~~^^
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 1387, in make
+    return compose_image(self.path, prof, chosen, opt['sizes'], opt, rng)
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 574, in compose_image
+    raise PlacementError(f'Could not place {mp.name} ({w:.1f} x {h:.1f} cm) on the {tw:g} x {td:g} cm '
+                         f'area without overlaps. Shrink obstacle zones, lower "mock-ups per image" '
+                         f'or the spacing.')
+PlacementError: Could not place moa26.jpg (21.6 x 27.9 cm) on the 85 x 44.5 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+
+
+[2026-10-25T14:22:23] test placement: 
+Could not place moa4.jpg (21.6 x 27.9 cm) on the 85 x 44.5 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+Traceback (most recent call last):
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 852, in reroll
+    self.img, infos = self.make_fn()
+                      ~~~~~~~~~~~~^^
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 1387, in make
+    return compose_image(self.path, prof, chosen, opt['sizes'], opt, rng)
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 574, in compose_image
+    raise PlacementError(f'Could not place {mp.name} ({w:.1f} x {h:.1f} cm) on the {tw:g} x {td:g} cm '
+                         f'area without overlaps. Shrink obstacle zones, lower "mock-ups per image" '
+                         f'or the spacing.')
+PlacementError: Could not place moa4.jpg (21.6 x 27.9 cm) on the 85 x 44.5 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+
+
+[2026-10-25T14:22:26] test placement: 
+Could not place BirthCertificate_21_Injection_Crop.jpg (27.9 x 21.6 cm) on the 85 x 44.5 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+Traceback (most recent call last):
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 852, in reroll
+    self.img, infos = self.make_fn()
+                      ~~~~~~~~~~~~^^
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 1387, in make
+    return compose_image(self.path, prof, chosen, opt['sizes'], opt, rng)
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 574, in compose_image
+    raise PlacementError(f'Could not place {mp.name} ({w:.1f} x {h:.1f} cm) on the {tw:g} x {td:g} cm '
+                         f'area without overlaps. Shrink obstacle zones, lower "mock-ups per image" '
+                         f'or the spacing.')
+PlacementError: Could not place BirthCertificate_21_Injection_Crop.jpg (27.9 x 21.6 cm) on the 85 x 44.5 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+
+
+[2026-10-25T14:22:53] test placement: 
+Could not place BirthCertificate_24_Injection_Blur.jpg (21.6 x 27.9 cm) on the 85 x 44.5 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+Traceback (most recent call last):
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 852, in reroll
+    self.img, infos = self.make_fn()
+                      ~~~~~~~~~~~~^^
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 1387, in make
+    return compose_image(self.path, prof, chosen, opt['sizes'], opt, rng)
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 574, in compose_image
+    raise PlacementError(f'Could not place {mp.name} ({w:.1f} x {h:.1f} cm) on the {tw:g} x {td:g} cm '
+                         f'area without overlaps. Shrink obstacle zones, lower "mock-ups per image" '
+                         f'or the spacing.')
+PlacementError: Could not place BirthCertificate_24_Injection_Blur.jpg (21.6 x 27.9 cm) on the 85 x 44.5 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+
+
+[2026-10-25T14:22:56] test placement: 
+Could not place Screenshot 2026-10-08 150917.png (21.6 x 27.9 cm) on the 85 x 44.5 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+Traceback (most recent call last):
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 852, in reroll
+    self.img, infos = self.make_fn()
+                      ~~~~~~~~~~~~^^
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 1387, in make
+    return compose_image(self.path, prof, chosen, opt['sizes'], opt, rng)
+  File "c:\Users\Juswa\Documents\Thesis\DATASETS\helper\privarcy_injection_helper.py", line 574, in compose_image
+    raise PlacementError(f'Could not place {mp.name} ({w:.1f} x {h:.1f} cm) on the {tw:g} x {td:g} cm '
+                         f'area without overlaps. Shrink obstacle zones, lower "mock-ups per image" '
+                         f'or the spacing.')
+PlacementError: Could not place Screenshot 2026-10-08 150917.png (21.6 x 27.9 cm) on the 85 x 44.5 cm area without overlaps. Shrink obstacle zones, lower "mock-ups per image" or the spacing.
+
