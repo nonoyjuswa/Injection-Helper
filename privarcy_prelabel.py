@@ -12,7 +12,11 @@ Companion to privarcy_injection_helper.py.  Two steps:
 Usage (Windows):
     py privarcy_prelabel.py train
     py privarcy_prelabel.py label
-    py privarcy_prelabel.py train --epochs 80 --model yolov8s.pt
+    py privarcy_prelabel.py train --epochs 80 --model yolo26m.pt --batch 4
+
+  Batch loop (corrected real images live in <Corrected>\\images and <Corrected>\\labels):
+    py privarcy_prelabel.py train --real-dir "<Corrected>"
+    py privarcy_prelabel.py label --skip-done "<Corrected>" --out "<Prelabeled_batch2>"
     py privarcy_prelabel.py label --source "D:\\real_images" --conf 0.2
     py privarcy_prelabel.py --help
 
@@ -45,6 +49,7 @@ BASE = r"C:\Users\Juswa\Documents\Thesis\DATASETS\Automated Injection"
 DEFAULT_SYNTH_DIR = BASE + r"\Output"          # output of the injection helper
 DEFAULT_REAL_DIR = BASE + r"\Real"             # your real, unlabeled images
 DEFAULT_PRELABEL_DIR = BASE + r"\Prelabeled"   # where draft labels are written
+DEFAULT_CORRECTED_DIR = BASE + r"\Corrected"   # your hand-corrected real images: Corrected\images + Corrected\labels. For find_orphans.py
 
 
 # =============================================================================
@@ -96,6 +101,17 @@ def class_names(names):
     return list(names)
 
 
+def corrected_dir(arg):
+    """Explicit --real-dir/--skip-done wins; otherwise use DEFAULT_CORRECTED_DIR if it exists and has images."""
+    if arg:
+        return arg
+    d = Path(DEFAULT_CORRECTED_DIR)
+    if list_images(d / 'images', recursive=False):
+        print(f"Using corrected real images from {d}")
+        return str(d)
+    return ''
+
+
 def find_latest_weights():
     cands = list(RUNS_DIR.glob('*/weights/best.pt'))
     return max(cands, key=lambda p: p.stat().st_mtime) if cands else None
@@ -104,9 +120,14 @@ def find_latest_weights():
 # =============================================================================
 #  Step 1: train on synthetic data
 # =============================================================================
-def make_split(data_yaml, val_fraction, seed):
-    """The injection helper writes train: images / val: images (same files).
-    Make a real train/val split so validation numbers are less meaningless.
+def make_split(data_yaml, val_fraction, seed, real_dir=None, real_val_fraction=0.2):
+    """Build the train/val lists for the draft model.
+
+    Synthetic only:  the synthetic images are split train/val (val_fraction).
+    With real_dir:   ALL synthetic images + most corrected real images go to
+                     train; a share of the real images (real_val_fraction) is
+                     held out as validation, so validation scores are measured
+                     on real photos.  real_dir must contain images/ and labels/.
     Returns the path of the yaml to train with."""
     cfg = load_yaml(data_yaml)
     root = Path(cfg.get('path') or Path(data_yaml).parent)
@@ -120,14 +141,41 @@ def make_split(data_yaml, val_fraction, seed):
     if not (root / 'labels').is_dir():
         die(f"No 'labels' folder next to the images in {root}.\n"
             f"Re-run the injection helper with 'Save YOLO labels' ticked.")
-    if val_fraction <= 0 or len(imgs) < 10:
-        return Path(data_yaml)                      # too few images to split sensibly
 
     rng = random.Random(seed)
-    shuffled = imgs[:]
-    rng.shuffle(shuffled)
-    n_val = max(1, int(round(len(shuffled) * val_fraction)))
-    val, train = shuffled[:n_val], shuffled[n_val:]
+    real = []
+    if real_dir:
+        rd = Path(real_dir)
+        real = list_images(rd / 'images', recursive=False)
+        if not real:
+            die(f"No images found in {rd / 'images'}.\n"
+                f"--real-dir must contain 'images' and 'labels' folders with your corrected real images.")
+        if not (rd / 'labels').is_dir():
+            die(f"No 'labels' folder in {rd}.")
+        missing = [r.name for r in real if not (rd / 'labels' / (r.stem + '.txt')).is_file()]
+        if missing:
+            print(f"WARNING: {len(missing)} real image(s) have no label file (treated as background): "
+                  + ', '.join(missing[:5]) + (' ...' if len(missing) > 5 else ''))
+
+    if real:
+        r = real[:]
+        rng.shuffle(r)
+        n_val = max(1, int(round(len(r) * real_val_fraction))) if len(r) >= 5 else 0
+        real_val, real_train = r[:n_val], r[n_val:]
+        if not real_val:
+            print("WARNING: fewer than 5 real images - using them for both train and val.")
+            real_val, real_train = r, r
+        train, val = imgs + real_train, real_val
+        print(f"Split: {len(imgs)} synthetic + {len(real_train)} real train / {len(real_val)} real val images")
+    else:
+        if val_fraction <= 0 or len(imgs) < 10:
+            return Path(data_yaml)                  # too few images to split sensibly
+        shuffled = imgs[:]
+        rng.shuffle(shuffled)
+        n_val = max(1, int(round(len(shuffled) * val_fraction)))
+        val, train = shuffled[:n_val], shuffled[n_val:]
+        print(f"Split: {len(train)} train / {len(val)} val synthetic images")
+
     split_dir = root / 'splits'
     split_dir.mkdir(exist_ok=True)
     (split_dir / 'train.txt').write_text('\n'.join(str(p) for p in train) + '\n', encoding='utf-8')
@@ -138,7 +186,6 @@ def make_split(data_yaml, val_fraction, seed):
                    'train: ' + (split_dir / 'train.txt').as_posix() + '\n'
                    'val: ' + (split_dir / 'val.txt').as_posix() + '\nnames:\n'
                    + ''.join(f'  {i}: {n}\n' for i, n in enumerate(names)), encoding='utf-8')
-    print(f"Split: {len(train)} train / {len(val)} val images  ({out})")
     return out
 
 
@@ -149,7 +196,7 @@ def cmd_train(a):
     if not data_yaml.is_file():
         die(f"data.yaml not found in {synth}.\n"
             f"Generate composites with the injection helper first (tick 'Save YOLO labels').")
-    data = make_split(data_yaml, a.val_fraction, a.seed)
+    data = make_split(data_yaml, a.val_fraction, a.seed, corrected_dir(a.real_dir) or None, a.real_val_fraction)
     device = pick_device(a.device)
     print(f"Training {a.model} on {device.upper() if device == 'cpu' else 'GPU ' + device} "
           f"for up to {a.epochs} epochs ...")
@@ -221,6 +268,15 @@ def cmd_label(a):
     images = list_images(src_root, recursive=not a.no_recursive)
     if not images:
         die(f"No images found in {src_root}")
+    skip = corrected_dir(a.skip_done)
+    if skip:
+        done_dir = Path(skip)
+        done = {f.stem.lower() for sub in ('images', 'labels') for f in (done_dir / sub).glob('*')}
+        before = len(images)
+        images = [p for p in images if p.stem.lower() not in done]
+        print(f"Skipping {before - len(images)} already-corrected image(s); {len(images)} left to pre-label.")
+        if not images:
+            die("Nothing left to pre-label - every image is already in the corrected folder.")
 
     out = Path(a.out)
     img_dir, lbl_dir = out / 'images', out / 'labels'
@@ -303,12 +359,15 @@ def build_parser():
     t = sub.add_parser('train', help='train YOLO on the injection helper output',
                        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     t.add_argument('--synthetic', default=DEFAULT_SYNTH_DIR, help='injection helper Output folder (has data.yaml)')
-    t.add_argument('--model', default='yolov8n.pt', help='starting weights (yolov8n.pt = small/fast, yolov8s.pt = better)')
+    t.add_argument('--model', default='yolo26n.pt', help='starting weights: yolo26n.pt (fast), yolo26s.pt, yolo26m.pt (thesis model; needs a big GPU)')
     t.add_argument('--epochs', type=int, default=50)
     t.add_argument('--imgsz', type=int, default=640)
     t.add_argument('--batch', type=int, default=16, help='lower this if you run out of memory (-1 = auto)')
     t.add_argument('--workers', type=int, default=2, help='data loader workers (use 0 if Windows gives errors)')
     t.add_argument('--patience', type=int, default=20, help='stop early after this many epochs without improvement')
+    t.add_argument('--real-dir', default='', help='folder with images/ and labels/ of your CORRECTED real images '
+                    '(adds them to training). Default: the Corrected folder, if it exists')
+    t.add_argument('--real-val-fraction', type=float, default=0.2, help='share of the corrected real images held out for validation')
     t.add_argument('--val-fraction', type=float, default=0.1, help='share of synthetic images held out for validation (0 = none)')
     t.add_argument('--seed', type=int, default=0)
     t.add_argument('--device', default='auto', help="auto, cpu, or GPU index like 0")
@@ -327,6 +386,8 @@ def build_parser():
     l.add_argument('--max-det', type=int, default=50)
     l.add_argument('--review-below', type=float, default=0.5, help='flag images whose weakest box is below this confidence')
     l.add_argument('--device', default='auto')
+    l.add_argument('--skip-done', default='', help='folder with images/ and labels/ of already-corrected images; '
+                   'images with the same file name are skipped. Default: the Corrected folder, if it exists')
     l.add_argument('--no-recursive', action='store_true', help='do not search sub-folders of --source')
     l.set_defaults(func=cmd_label)
     return p
