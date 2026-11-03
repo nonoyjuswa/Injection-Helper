@@ -77,7 +77,7 @@ def extract(video: Path, out_dir: Path, args) -> int:
     if start_f:
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
     idx = start_f
-    saved = skipped = 0
+    saved = skipped = existing = 0
     ext = '.png' if args.format == 'png' else '.jpg'
     params = ([cv2.IMWRITE_PNG_COMPRESSION, 3] if ext == '.png'
               else [cv2.IMWRITE_JPEG_QUALITY, args.quality])
@@ -86,22 +86,26 @@ def extract(video: Path, out_dir: Path, args) -> int:
         if not cap.grab():                       # end of video (or broken frame count)
             break
         if idx in wanted:
-            ok, frame = cap.retrieve()           # decode only the frames we keep
-            if ok:
-                if args.min_sharpness and sharpness(frame) < args.min_sharpness:
-                    skipped += 1
-                else:
-                    if args.max_side:
-                        h, w = frame.shape[:2]
-                        s = args.max_side / max(h, w)
-                        if s < 1:
-                            frame = cv2.resize(frame, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
-                    dest = out_dir / f'{video.stem}_f{idx:06d}{ext}'
-                    if cv2.imwrite(str(dest), frame, params):
-                        saved += 1
+            dest = out_dir / f'{video.stem}_f{idx:06d}{ext}'
+            if dest.exists() and not args.overwrite:
+                existing += 1                    # already saved on an earlier run
+            else:
+                ok, frame = cap.retrieve()       # decode only the frames we keep
+                if ok:
+                    if args.min_sharpness and sharpness(frame) < args.min_sharpness:
+                        skipped += 1
+                    else:
+                        if args.max_side:
+                            h, w = frame.shape[:2]
+                            s = args.max_side / max(h, w)
+                            if s < 1:
+                                frame = cv2.resize(frame, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
+                        if cv2.imwrite(str(dest), frame, params):
+                            saved += 1
         idx += 1
     cap.release()
-    extra = f', {skipped} skipped as blurry' if skipped else ''
+    extra = (f', {skipped} skipped as blurry' if skipped else '') + \
+            (f', {existing} already existed' if existing else '')
     print(f'  {video.name}: {saved} frame(s) saved{extra}  ({fps:.1f} fps, {total} frames)')
     return saved
 
@@ -119,13 +123,20 @@ def main():
     ap.add_argument('--format', choices=('jpg', 'png'), default='jpg')
     ap.add_argument('--quality', type=int, default=95, help='JPEG quality (default 95)')
     ap.add_argument('--max-side', type=int, default=0, help='downscale so the longer side is at most N px')
+    ap.add_argument('--overwrite', action='store_true', help='re-save frames even if the file already exists')
     ap.add_argument('--min-sharpness', type=float, default=0.0,
                     help='skip blurry frames below this Laplacian variance (try 50-100)')
     args = ap.parse_args()
 
-    videos = list_videos(Path(args.input))
+    src = Path(args.input)
+    if not src.exists():                         # bare name like "vid_01.mp4" -> look in the Videos folder
+        alt = Path(DEFAULT_VIDEO_DIR) / args.input
+        if alt.exists():
+            src = alt
+    videos = list_videos(src)
     if not videos:
-        sys.exit(f'No videos found at: {args.input}')
+        sys.exit(f'No videos found at: {src.resolve()}\n'
+                 f'(current folder: {Path.cwd()}; default video folder: {DEFAULT_VIDEO_DIR})')
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
