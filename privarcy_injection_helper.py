@@ -84,6 +84,7 @@ DEFAULT_SETTINGS = {
     "keep_aspect": False, "fallback": "8.56",
     "shadow": True, "light": True, "strength": "50", "fx": True,
     "quality": "95", "seed": "", "labels": True,
+    "mode": "auto", "total": "100", "fill": "20", "max_items": "8", "boost": "4", "priority": [],
     "sizes": DEFAULT_SIZES,
 }
 
@@ -514,8 +515,73 @@ def pick_mockups(rng, mockups, n, first=None, dupes=False, class_of=None):
     return chosen
 
 
-def compose_image(bg_path, profile, mockups, sizes, opt, rng):
-    """Build one composite.  Returns (PIL RGB image, [info dict per placed object])."""
+_PX = {}
+
+
+def mockup_px(mp):
+    """Trimmed pixel size of a mock-up (cached)."""
+    p = Path(mp)
+    key = (str(p), p.stat().st_mtime_ns)
+    if key not in _PX:
+        _PX[key] = load_mockup(p).size
+    return _PX[key]
+
+
+def mockup_meta(mp, sizes, opt):
+    cls = mockup_class(mp, opt['mock_dir'])
+    w, h, _key, _ = resolve_real_size(mp, mockup_px(mp), sizes, opt['fallback'], opt['keep_aspect'], cls)
+    return {'path': Path(mp), 'cls': cls, 'w': w, 'h': h, 'area': w * h}
+
+
+def jittered(it, rng, pct):
+    if pct <= 0:
+        return dict(it)
+    f = 1 + rng.uniform(-pct, pct) / 100.0
+    return {**it, 'w': it['w'] * f, 'h': it['h'] * f, 'area': it['area'] * f * f}
+
+
+def plan_auto(rng, metas, tw, td, opt):
+    """AUTO mode: decide WHAT to place from the real size of the table.
+
+    Items are drawn (class first, so priority classes win more often) until about
+    `fill` % of the usable table area is covered or `max_items` is reached.  Only
+    items that physically fit inside the table are considered, so a big document
+    simply never gets picked for a small table.
+    """
+    m = opt['margin']
+    usable = max(tw - 2 * m, 0.0) * max(td - 2 * m, 0.0)
+    target = usable * opt.get('fill', 20.0) / 100.0
+    prio, boost = set(opt.get('priority', [])), float(opt.get('boost', 1.0))
+    dupes, max_items = opt.get('dupes', False), int(opt.get('max_items', 8))
+    fits = [x for x in metas if x['w'] + 2 * m <= tw and x['h'] + 2 * m <= td]
+    plan, covered, used = [], 0.0, set()
+    while fits and len(plan) < max_items:
+        if plan and covered >= target:
+            break
+        cands = [x for x in fits if (dupes or x['path'] not in used)
+                 and (not plan or covered + x['area'] <= target * 1.25)]
+        if not cands:
+            break
+        by = {}
+        for x in cands:
+            by.setdefault(x['cls'], []).append(x)
+        classes = list(by)
+        c = rng.choices(classes, [boost if k in prio else 1.0 for k in classes])[0]
+        x = jittered(rng.choice(by[c]), rng, opt['jitter'])
+        plan.append(x)
+        covered += x['area']
+        used.add(x['path'])
+    return plan
+
+
+def compose_image(bg_path, profile, mockups, sizes, opt, rng, pool=None):
+    """Build one composite.
+
+    mockups=None  -> AUTO: choose what to place from `pool` using the table's real area.
+    mockups=[...] -> FIXED: place those; anything that cannot fit is SWAPPED for a smaller
+                     mock-up from the pool (or dropped if nothing smaller fits).
+    Returns (PIL RGB image, [info dict per placed object], {'swapped': n, 'dropped': n}).
+    """
     canvas = np.array(load_rgb(bg_path), dtype=np.uint8)
     Hh, Ww = canvas.shape[:2]
     table = [tuple(p) for p in profile['table']]
@@ -532,21 +598,31 @@ def compose_image(bg_path, profile, mockups, sizes, opt, rng):
     light = (math.cos(ang), math.sin(ang))                 # shadows fall "downwards"
     nprng = np.random.default_rng(rng.randrange(2 ** 32))
     margin, gap, max_rot = opt['margin'], opt['gap'], opt['rot']
+    prio, boost = set(opt.get('priority', [])), float(opt.get('boost', 1.0))
+    dupes = opt.get('dupes', False)
 
-    items = []
-    for mp in mockups:
-        fg = load_mockup(mp)
-        cls = mockup_class(mp, opt['mock_dir'])
-        w, h, key, _ = resolve_real_size(mp, fg.size, sizes, opt['fallback'], opt['keep_aspect'], cls)
-        if opt['jitter'] > 0:
-            f = 1 + rng.uniform(-opt['jitter'], opt['jitter']) / 100.0
-            w, h = w * f, h * f
-        items.append((Path(mp), fg, w, h, cls))
-    items.sort(key=lambda t: -(t[2] * t[3]))              # big things first -> easier packing
+    paths = list(dict.fromkeys(Path(p) for p in (pool if pool is not None else (mockups or []))))
+    for m in mockups or []:
+        if Path(m) not in paths:
+            paths.append(Path(m))
+    metas = {p: mockup_meta(p, sizes, opt) for p in paths}
 
-    placed_plane, placed = [], []
-    for mp, fg, w, h, cls in items:
-        quad, fit_possible = None, False
+    def fits(x):
+        return x['w'] + 2 * margin <= tw and x['h'] + 2 * margin <= td
+
+    if mockups is None:
+        plan = plan_auto(rng, list(metas.values()), tw, td, opt)
+        if not plan:
+            raise PlacementError(f'No mock-up fits inside the marked {tw:g} x {td:g} cm table area. '
+                                 f'Check the table size in the profile or the mock-up sizes.')
+    else:
+        plan = [jittered(metas[Path(m)], rng, opt['jitter']) for m in mockups]
+    plan.sort(key=lambda x: -x['area'])                    # big things first -> easier packing
+
+    placed_plane = []
+
+    def try_place(it):
+        w, h = it['w'], it['h']
         for _ in range(400):
             angle = rng.uniform(-max_rot, max_rot) if max_rot > 0 else 0.0
             a = math.radians(angle)
@@ -556,7 +632,6 @@ def compose_image(bg_path, profile, mockups, sizes, opt, rng):
             ylo, yhi = margin + hy, td - margin - hy
             if xlo > xhi or ylo > yhi:
                 continue
-            fit_possible = True
             cx, cy = rng.uniform(xlo, xhi), rng.uniform(ylo, yhi)
             infl = footprint_plane(cx, cy, w + gap, h + gap, angle)
             if any(convex_polys_overlap(infl, p) for p in placed_plane):
@@ -564,24 +639,45 @@ def compose_image(bg_path, profile, mockups, sizes, opt, rng):
             q = apply_h(Hm, footprint_plane(cx, cy, w, h, angle))
             if obs.hits(q):
                 continue
-            quad = q
             placed_plane.append(infl)
-            break
+            return q
+        return None
+
+    placed, dropped, swapped = [], 0, 0
+    in_use = {it['path'] for it in plan}
+    for it in plan:
+        quad, origin = try_place(it), None
+        if quad is None:                                   # SWAP for something smaller
+            repl = [x for x in metas.values()
+                    if x['area'] < it['area'] and fits(x) and (dupes or x['path'] not in in_use)]
+            tries = 0
+            while repl and tries < 8 and quad is None:
+                x = rng.choices(repl, [boost if r['cls'] in prio else 1.0 for r in repl])[0]
+                repl.remove(x)
+                tries += 1
+                cand = jittered(x, rng, opt['jitter'])
+                q = try_place(cand)
+                if q is not None:
+                    quad, origin, it = q, it, cand
+                    in_use.add(x['path'])
+                    swapped += 1
         if quad is None:
-            if not fit_possible:
-                raise PlacementError(f'{mp.name} ({w:.1f} x {h:.1f} cm) is larger than the marked table area '
-                                     f'({tw:g} x {td:g} cm). Re-check the table size in the profile.')
-            raise PlacementError(f'Could not place {mp.name} ({w:.1f} x {h:.1f} cm) on the {tw:g} x {td:g} cm '
-                                 f'area without overlaps. Shrink obstacle zones, lower "mock-ups per image" '
-                                 f'or the spacing.')
-        placed.append((mp, fg, quad, (w, h), cls))
+            dropped += 1
+            continue
+        placed.append((it, quad, origin))
+    if not placed:
+        if not any(fits(x) for x in metas.values()):
+            raise PlacementError(f'No mock-up fits inside the marked {tw:g} x {td:g} cm table area. '
+                                 f'Check the table size in the profile or the mock-up sizes.')
+        raise PlacementError(f'Could not place anything on the {tw:g} x {td:g} cm area '
+                             f'(obstacle zones may cover too much of it).')
 
     infos = []
-    for mp, fg, quad, (w, h), cls in placed:
-        composite_object(canvas, fg, quad, opt, scene, light, nprng)
-        infos.append({'file': mp.name, 'class': cls, 'size_cm': (round(w, 2), round(h, 2)),
-                      'quad': quad.tolist()})
-    return Image.fromarray(canvas), infos
+    for it, quad, origin in placed:
+        composite_object(canvas, load_mockup(it['path']), quad, opt, scene, light, nprng)
+        infos.append({'file': it['path'].name, 'class': it['cls'], 'size_cm': (round(it['w'], 2), round(it['h'], 2)),
+                      'quad': quad.tolist(), 'swapped_from': origin['path'].name if origin else None})
+    return Image.fromarray(canvas), infos, {'swapped': swapped, 'dropped': dropped}
 
 
 # =============================================================================
@@ -661,6 +757,7 @@ class GenerationWorker(threading.Thread):
 
     def _run(self):
         c = self.cfg
+        auto = c['mode'] == 'auto'
         backgrounds = list_images(c['bg_dir'])
         mockups = list_mockups(c['mock_dir'])
         class_of = class_map(mockups, c['mock_dir'])
@@ -670,7 +767,7 @@ class GenerationWorker(threading.Thread):
             raise ValueError('No images found in the Backgrounds folder.')
         if not mockups:
             raise ValueError('No images found in the Mock-ups folder.')
-        if c['objects'] > len(mockups) and not c['dupes']:
+        if not auto and c['objects'] > len(mockups) and not c['dupes']:
             raise ValueError(f'"Mock-ups per image" is {c["objects"]} but there are only {len(mockups)} mock-up '
                              f'files. Add more files, lower the number, or tick "Allow the same mock-up twice".')
 
@@ -691,6 +788,10 @@ class GenerationWorker(threading.Thread):
                              'real table size for at least one background (tab 1).')
         self.log(f'{len(profiles)} background(s) ready, {len(mockups)} mock-up(s) in {len(classes)} class(es): '
                  + ', '.join(f'{n} ({sum(1 for v in class_of.values() if v == n)})' for n in classes), 'ok')
+        if auto:
+            pr = [p for p in c['priority'] if p in classes]
+            self.log(f'AUTO-FILL: about {c["fill"]:g}% of each table, up to {c["max_items"]} items. '
+                     + (f'Priority: {", ".join(pr)} (x{c["boost"]:g}).' if pr else 'No priority class (balanced).'), 'ok')
         for m in mockups:
             try:
                 fg = load_mockup(m)
@@ -714,49 +815,63 @@ class GenerationWorker(threading.Thread):
             (out / 'data.yaml').write_text(
                 'path: ' + out.as_posix() + '\ntrain: images\nval: images\nnames:\n'
                 + ''.join(f'  {i}: {n}\n' for i, n in enumerate(classes)), encoding='utf-8')
-        total = len(mockups) * c['count']
+        jobs = [(None, k) for k in range(c['total'])] if auto else [(m, k) for m in mockups for k in range(c['count'])]
+        total = len(jobs)
         done = ok = fail = 0
+        swapped_imgs = dropped_items = 0
+        per_class = {n: 0 for n in classes}
         keys = list(profiles.keys())
         self.q.put(('progress', 0, total, 0, 0))
         cancelled = False
-        for mock in mockups:
-            for k in range(c['count']):
-                if self.cancel.is_set():
-                    cancelled = True
-                    break
-                last_err, success = None, False
-                for _ in range(6):                      # try other backgrounds if one is too crowded
-                    bg = rng.choice(keys)
-                    chosen = pick_mockups(rng, mockups, c['objects'], first=mock, dupes=c['dupes'], class_of=class_of)
-                    try:
-                        img, infos = compose_image(bg, profiles[bg], chosen, c['sizes'], c, rng)
-                        name = f'{bg.stem}__{class_of[mock]}__{mock.stem}__{k + 1:03d}_{c["objects"]}objects'
-                        dest, n = img_dir / f'{name}.jpg', 2
-                        while dest.exists():
-                            dest, n = img_dir / f'{name}_{n}.jpg', n + 1
-                        img.save(dest, quality=c['quality'], optimize=True,
-                                 subsampling=0 if c['quality'] >= 90 else 2)
-                        if c['labels']:
-                            (lbl_dir / (dest.stem + '.txt')).write_text(
-                                '\n'.join(yolo_lines(infos, img.width, img.height, class_ids)) + '\n',
-                                encoding='utf-8')
-                        success = True
-                        break
-                    except PlacementError as e:
-                        last_err = e
-                    except Exception as e:
-                        last_err = e
-                        log_error(f'generate {mock.name} #{k + 1}', bg, e)
-                        break
-                done += 1
-                if success:
-                    ok += 1
-                else:
-                    fail += 1
-                    self.log(f'Failed {mock.name} #{k + 1}: {last_err}', 'err')
-                self.q.put(('progress', done, total, ok, fail))
-            if cancelled:
+        for idx, (mock, k) in enumerate(jobs, 1):
+            if self.cancel.is_set():
+                cancelled = True
                 break
+            last_err, success = None, False
+            for attempt in range(6):                    # try other backgrounds if one is too small / crowded
+                bg = rng.choice(keys)
+                chosen = None if auto else pick_mockups(rng, mockups, c['objects'], first=mock,
+                                                        dupes=c['dupes'], class_of=class_of)
+                try:
+                    img, infos, st = compose_image(bg, profiles[bg], chosen, c['sizes'], c, rng, pool=mockups)
+                    if not auto and st['dropped'] and attempt < 5:
+                        last_err = PlacementError('not all requested mock-ups fit')
+                        continue                        # fixed count: prefer a roomier background
+                    lead = infos[0]
+                    name = (f'{bg.stem}__{lead["class"]}__{Path(lead["file"]).stem}__'
+                            f'{idx:04d}_{len(infos)}objects')
+                    dest, n = img_dir / f'{name}.jpg', 2
+                    while dest.exists():
+                        dest, n = img_dir / f'{name}_{n}.jpg', n + 1
+                    img.save(dest, quality=c['quality'], optimize=True,
+                             subsampling=0 if c['quality'] >= 90 else 2)
+                    if c['labels']:
+                        (lbl_dir / (dest.stem + '.txt')).write_text(
+                            '\n'.join(yolo_lines(infos, img.width, img.height, class_ids)) + '\n',
+                            encoding='utf-8')
+                    for i in infos:
+                        per_class[i['class']] += 1
+                    swapped_imgs += st['swapped'] > 0
+                    dropped_items += st['dropped']
+                    success = True
+                    break
+                except PlacementError as e:
+                    last_err = e
+                except Exception as e:
+                    last_err = e
+                    log_error(f'generate #{idx}', bg, e)
+                    break
+            done += 1
+            if success:
+                ok += 1
+            else:
+                fail += 1
+                self.log(f'Failed image #{idx}: {last_err}', 'err')
+            self.q.put(('progress', done, total, ok, fail))
+        self.log('Objects placed per class: ' + ', '.join(f'{n} {v}' for n, v in per_class.items()), 'info')
+        if swapped_imgs or dropped_items:
+            self.log(f'{swapped_imgs} image(s) had a mock-up swapped for a smaller one (it did not fit); '
+                     f'{dropped_items} item(s) could not be placed at all.', 'warn')
         self.q.put(('done', ok, fail, str(out), cancelled))
 
 
@@ -765,6 +880,40 @@ class GenerationWorker(threading.Thread):
 # =============================================================================
 def flat(pts):
     return [v for p in pts for v in p]
+
+
+class ScrollFrame(ttk.Frame):
+    """A vertically scrollable container: put widgets into `.body`; wheel works over it."""
+
+    def __init__(self, parent, width=1, **body_kw):
+        super().__init__(parent)
+        self.canvas = tk.Canvas(self, highlightthickness=0, bg=BG, width=width)
+        self.vsb = ttk.Scrollbar(self, orient='vertical', command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.vsb.set)
+        self.vsb.pack(side='right', fill='y')
+        self.canvas.pack(side='left', fill='both', expand=True)
+        self.body = ttk.Frame(self.canvas, **body_kw)
+        self.win = self.canvas.create_window((0, 0), window=self.body, anchor='nw')
+        self.body.bind('<Configure>', lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox('all')))
+        self.canvas.bind('<Configure>', lambda e: self.canvas.itemconfigure(self.win, width=e.width))
+        for seq in ('<MouseWheel>', '<Button-4>', '<Button-5>'):
+            self.bind_all(seq, self._on_wheel, add='+')
+
+    def _on_wheel(self, e):
+        try:
+            if not self.winfo_exists():
+                return
+            w = self.winfo_containing(e.x_root, e.y_root)
+        except (tk.TclError, KeyError):
+            return
+        if w is None or not str(w).startswith(str(self)):
+            return
+        if w.winfo_class() in ('Text', 'Listbox', 'Treeview', 'TCombobox'):
+            return
+        if self.canvas.yview() == (0.0, 1.0):
+            return
+        up = e.num == 4 or getattr(e, 'delta', 0) > 0
+        self.canvas.yview_scroll(-2 if up else 2, 'units')
 
 
 class SizeDialog(tk.Toplevel):
@@ -849,8 +998,11 @@ class PreviewWindow(tk.Toplevel):
         self.config(cursor='watch')
         self.update_idletasks()
         try:
-            self.img, infos = self.make_fn()
-            self.info.set('   '.join(f'[{i["class"]}] {i["file"]}: {i["size_cm"][0]} x {i["size_cm"][1]} cm' for i in infos))
+            self.img, infos, st = self.make_fn()
+            note = (f'   ({st["swapped"]} swapped for a smaller item)' if st.get('swapped') else '') + \
+                   (f'   ({st["dropped"]} did not fit)' if st.get('dropped') else '')
+            self.info.set('   '.join(f'[{i["class"]}] {i["file"]}: {i["size_cm"][0]} x {i["size_cm"][1]} cm'
+                                     for i in infos) + note)
         except Exception as e:
             log_error('test placement', '', e)
             messagebox.showerror('Could not place', str(e), parent=self)
@@ -927,15 +1079,21 @@ class MarkingWindow(tk.Toplevel):
         self.rowconfigure(0, weight=1)
         self.canvas = tk.Canvas(self, bg='#1f2937', highlightthickness=0, cursor='crosshair')
         self.canvas.grid(row=0, column=0, sticky='nsew')
-        side = ttk.Frame(self, padding=(10, 8))
-        side.grid(row=0, column=1, sticky='ns')
+        self.vbar = ttk.Scrollbar(self, orient='vertical', command=lambda *a: self.scroll_cmd('y', a))
+        self.vbar.grid(row=0, column=1, sticky='ns')
+        self.hbar = ttk.Scrollbar(self, orient='horizontal', command=lambda *a: self.scroll_cmd('x', a))
+        self.hbar.grid(row=1, column=0, sticky='ew')
+        sf = ScrollFrame(self, width=300, padding=(10, 8))
+        sf.grid(row=0, column=2, rowspan=2, sticky='ns')
+        side = sf.body
         bar = ttk.Frame(self, padding=(10, 8))
-        bar.grid(row=1, column=0, columnspan=2, sticky='ew')
+        bar.grid(row=2, column=0, columnspan=3, sticky='ew')
 
         f = ttk.LabelFrame(side, text='①  Tabletop area', padding=8)
         f.pack(fill='x', pady=(0, 8))
-        ttk.Label(f, text='Click 4 corners clockwise:\nfar-left → far-right → near-right → near-left.\n'
-                          'Drag a corner to fine-tune.', style='Sub.TLabel', justify='left').pack(anchor='w')
+        ttk.Label(f, text='Click 4 corners clockwise: far-left → far-right → near-right → near-left. '
+                          'Drag a corner to fine-tune.', style='Sub.TLabel', wraplength=250,
+                  justify='left').pack(anchor='w')
         ttk.Button(f, text='Mark / re-mark corners', command=self.start_table).pack(fill='x', pady=(6, 0))
 
         f = ttk.LabelFrame(side, text='②  Real size of that area', padding=8)
@@ -950,7 +1108,7 @@ class MarkingWindow(tk.Toplevel):
         ttk.Label(g, text='cm').grid(row=1, column=2)
         ttk.Button(f, text='Estimate depth from perspective', command=self.estimate_depth).pack(fill='x', pady=(6, 0))
         ttk.Label(f, text='Best: measure the marked area with a tape measure. Use the ghost card below '
-                          'to double-check the scale.', style='Sub.TLabel', wraplength=260,
+                          'to double-check the scale.', style='Sub.TLabel', wraplength=250,
                   justify='left').pack(anchor='w', pady=(6, 0))
 
         f = ttk.LabelFrame(side, text='③  Objects to avoid', padding=8)
@@ -967,6 +1125,11 @@ class MarkingWindow(tk.Toplevel):
 
         f = ttk.LabelFrame(side, text='View & real-size check', padding=8)
         f.pack(fill='x')
+        z = ttk.Frame(f)
+        z.pack(fill='x', pady=(0, 6))
+        ttk.Button(z, text='−', width=3, command=lambda: self.zoom_by(1 / 1.25)).pack(side='left')
+        ttk.Button(z, text='+', width=3, command=lambda: self.zoom_by(1.25)).pack(side='left', padx=4)
+        ttk.Button(z, text='Fit view', command=self.fit).pack(side='left', expand=True, fill='x')
         ttk.Checkbutton(f, text='Show measuring grid on the table', variable=self.show_grid,
                         command=self.redraw).pack(anchor='w')
         ttk.Checkbutton(f, text='Show real-size ghost (drag it):', variable=self.show_ghost,
@@ -976,9 +1139,10 @@ class MarkingWindow(tk.Toplevel):
         cb = ttk.Combobox(f, textvariable=self.ghost_key, values=keys, state='readonly', width=22)
         cb.pack(fill='x', pady=(2, 6))
         cb.bind('<<ComboboxSelected>>', lambda _e: self.redraw())
-        ttk.Button(f, text='Fit view', command=self.fit).pack(fill='x')
-        ttk.Label(f, text='Wheel = zoom · middle-drag or Shift-drag = pan\nRight-click = undo point · Enter = finish zone',
-                  style='Sub.TLabel', justify='left').pack(anchor='w', pady=(6, 0))
+        ttk.Label(f, text='Scroll-bars or mouse wheel = scroll\nShift+wheel = sideways · Ctrl+wheel = zoom\n'
+                          'Arrow keys = scroll · + / − = zoom\nMiddle-drag or Shift-drag = pan\n'
+                          'Right-click = undo point · Enter = finish zone',
+                  style='Sub.TLabel', justify='left').pack(anchor='w', pady=(2, 0))
 
         ttk.Label(bar, textvariable=self.status, style='Sub.TLabel', wraplength=760,
                   justify='left').pack(side='left', fill='x', expand=True)
@@ -1003,6 +1167,14 @@ class MarkingWindow(tk.Toplevel):
         c.bind('<Escape>', lambda _e: self.cancel_current())
         c.bind('<Delete>', lambda _e: self.delete_obstacle())
         c.bind('<f>', lambda _e: self.fit())
+        for key in ('<plus>', '<equal>', '<KP_Add>'):
+            c.bind(key, lambda _e: self.zoom_by(1.25))
+        for key in ('<minus>', '<KP_Subtract>'):
+            c.bind(key, lambda _e: self.zoom_by(1 / 1.25))
+        c.bind('<Left>', lambda _e: self.nudge(60, 0))
+        c.bind('<Right>', lambda _e: self.nudge(-60, 0))
+        c.bind('<Up>', lambda _e: self.nudge(0, 60))
+        c.bind('<Down>', lambda _e: self.nudge(0, -60))
         self.refresh_list()
 
     # ---------------------------------------------------------- helpers ----
@@ -1070,6 +1242,54 @@ class MarkingWindow(tk.Toplevel):
     def cv(self, p):
         return p[0] * self.zoom + self.ox, p[1] * self.zoom + self.oy
 
+    def clamp_view(self):
+        cw, ch = max(self.canvas.winfo_width(), 50), max(self.canvas.winfo_height(), 50)
+        iw, ih, sl = self.W * self.zoom, self.H * self.zoom, 60
+        self.ox = (cw - iw) / 2 if iw + 2 * sl <= cw else min(sl, max(cw - iw - sl, self.ox))
+        self.oy = (ch - ih) / 2 if ih + 2 * sl <= ch else min(sl, max(ch - ih - sl, self.oy))
+
+    def update_scrollbars(self):
+        cw, ch = max(self.canvas.winfo_width(), 50), max(self.canvas.winfo_height(), 50)
+
+        def span(off, view, total):
+            if total <= view:
+                return 0.0, 1.0
+            return max(0.0, -off / total), min(1.0, (view - off) / total)
+
+        self.hbar.set(*span(self.ox, cw, self.W * self.zoom))
+        self.vbar.set(*span(self.oy, ch, self.H * self.zoom))
+
+    def scroll_cmd(self, axis, a):
+        cw, ch = max(self.canvas.winfo_width(), 50), max(self.canvas.winfo_height(), 50)
+        total, view = (self.W * self.zoom, cw) if axis == 'x' else (self.H * self.zoom, ch)
+        off = self.ox if axis == 'x' else self.oy
+        if a[0] == 'moveto':
+            off = -float(a[1]) * total
+        elif a[0] == 'scroll':
+            off -= int(a[1]) * (view * 0.9 if a[2] == 'pages' else 40)
+        if axis == 'x':
+            self.ox = off
+        else:
+            self.oy = off
+        self.fitted = False
+        self.redraw()
+
+    def nudge(self, dx, dy):
+        self.ox += dx
+        self.oy += dy
+        self.fitted = False
+        self.redraw()
+
+    def zoom_by(self, f, cx=None, cy=None):
+        cw, ch = max(self.canvas.winfo_width(), 50), max(self.canvas.winfo_height(), 50)
+        cx = cw / 2 if cx is None else cx
+        cy = ch / 2 if cy is None else cy
+        nz = max(self.fit_zoom * 0.5, min(40.0, self.zoom * f))
+        ix, iy = (cx - self.ox) / self.zoom, (cy - self.oy) / self.zoom
+        self.ox, self.oy, self.zoom = cx - ix * nz, cy - iy * nz, nz
+        self.fitted = False
+        self.redraw()
+
     # --------------------------------------------------------- drawing -----
     def redraw(self):
         if not hasattr(self, 'canvas') or not self.canvas.winfo_exists():
@@ -1081,6 +1301,8 @@ class MarkingWindow(tk.Toplevel):
             return
         if self.fitted:
             self.fit(redraw=False)
+        else:
+            self.clamp_view()
         z = self.zoom
         ix0, iy0 = max(0.0, -self.ox / z), max(0.0, -self.oy / z)
         ix1, iy1 = min(float(self.W), (cw - self.ox) / z), min(float(self.H), (ch - self.oy) / z)
@@ -1146,6 +1368,8 @@ class MarkingWindow(tk.Toplevel):
                 w, h = self.ghost_size()
                 c.create_text(sum(p[0] for p in pts) / 4, sum(p[1] for p in pts) / 4, fill='white',
                               text=f'{w:g} × {h:g} cm', font=('TkDefaultFont', 9, 'bold'))
+
+        self.update_scrollbars()
 
     # ----------------------------------------------------------- ghost -----
     def ghost_size(self):
@@ -1253,12 +1477,13 @@ class MarkingWindow(tk.Toplevel):
 
     def on_wheel(self, e, delta=None):
         d = delta if delta is not None else e.delta
-        f = 1.2 if d > 0 else 1 / 1.2
-        nz = max(self.fit_zoom * 0.5, min(40.0, self.zoom * f))
-        ix, iy = (e.x - self.ox) / self.zoom, (e.y - self.oy) / self.zoom
-        self.ox, self.oy, self.zoom = e.x - ix * nz, e.y - iy * nz, nz
-        self.fitted = False
-        self.redraw()
+        up = d > 0
+        if e.state & 0x0004:                                # Ctrl = zoom around the cursor
+            self.zoom_by(1.2 if up else 1 / 1.2, e.x, e.y)
+        elif e.state & 0x0001:                              # Shift = sideways
+            self.nudge(60 if up else -60, 0)
+        else:                                               # plain wheel = scroll up/down
+            self.nudge(0, 60 if up else -60)
 
     # ------------------------------------------------------- actions -------
     def start_table(self):
@@ -1383,8 +1608,8 @@ class MarkingWindow(tk.Toplevel):
 
         def make():
             rng = random.Random()
-            chosen = pick_mockups(rng, mockups, n, dupes=opt['dupes'], class_of=cmap)
-            return compose_image(self.path, prof, chosen, opt['sizes'], opt, rng)
+            chosen = None if opt['mode'] == 'auto' else pick_mockups(rng, mockups, n, dupes=opt['dupes'], class_of=cmap)
+            return compose_image(self.path, prof, chosen, opt['sizes'], opt, rng, pool=mockups)
 
         PreviewWindow(self, make)
 
@@ -1407,8 +1632,8 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry('1040x760')
-        self.minsize(900, 660)
+        self.geometry('1060x820')
+        self.minsize(900, 620)
         self.settings = load_settings()
         self.sizes = {k: list(v) for k, v in self.settings['sizes'].items()}
         self.marking = None
@@ -1426,6 +1651,10 @@ class App(tk.Tk):
         self.v_fallback, self.v_strength, self.v_quality, self.v_seed = sv('fallback'), sv('strength'), sv('quality'), sv('seed')
         self.v_dupes, self.v_keep, self.v_shadow = bv('dupes'), bv('keep_aspect'), bv('shadow')
         self.v_light, self.v_fx, self.v_labels = bv('light'), bv('fx'), bv('labels')
+        self.v_mode = tk.StringVar(value=S['mode'])
+        self.v_total, self.v_fill, self.v_maxitems, self.v_boost = sv('total'), sv('fill'), sv('max_items'), sv('boost')
+        self.priority_sel = set(S.get('priority', []))
+        self.known_classes = []
 
         self.setup_style()
         self.build_ui()
@@ -1503,9 +1732,11 @@ class App(tk.Tk):
 
     def field(self, parent, row, label, var, unit='', width=8, col=0):
         ttk.Label(parent, text=label).grid(row=row, column=col, sticky='w', pady=4, padx=(0, 8))
-        ttk.Entry(parent, textvariable=var, width=width).grid(row=row, column=col + 1, sticky='w', pady=4)
+        e = ttk.Entry(parent, textvariable=var, width=width)
+        e.grid(row=row, column=col + 1, sticky='w', pady=4)
         if unit:
             ttk.Label(parent, text=unit, style='Sub.TLabel').grid(row=row, column=col + 2, sticky='w', padx=(6, 0))
+        return e
 
     def pick_dir(self, var, after=None):
         d = var.get().strip()
@@ -1682,6 +1913,8 @@ class App(tk.Tk):
                     rel, f'{fg.width} × {fg.height}', cls, f'{w:.2f} × {h:.2f}', '; '.join(warns)))
             except Exception as e:
                 self.tv_mock.insert('', 'end', tags=('bad',), values=(rel, '?', cls, '—', str(e)))
+        self.known_classes = sorted(counts)
+        self.refresh_priority_list()
         if hasattr(self, 'lbl_classes'):
             self.lbl_classes.config(text=(f'{len(counts)} class(es): ' + ',  '.join(
                 f'{n} ({c})' for n, c in sorted(counts.items()))) if counts else 'No mock-ups found.')
@@ -1731,41 +1964,70 @@ class App(tk.Tk):
 
     # ---- tab 3 ----
     def build_tab_generate(self, tab):
-        tab.columnconfigure(0, weight=1, uniform='g')
-        tab.columnconfigure(1, weight=1, uniform='g')
-        tab.rowconfigure(6, weight=1)
-        f = ttk.LabelFrame(tab, text='Output', padding=10)
+        sf = ScrollFrame(tab)
+        sf.pack(fill='both', expand=True)
+        body = sf.body
+        body.columnconfigure(0, weight=1, uniform='g')
+        body.columnconfigure(1, weight=1, uniform='g')
+
+        f = ttk.LabelFrame(body, text='Output', padding=10)
         f.grid(row=0, column=0, columnspan=2, sticky='ew', pady=(0, 8))
         self.path_row(f, 0, 'Output folder', self.v_out, lambda: self.pick_dir(self.v_out))
 
-        f = ttk.LabelFrame(tab, text='How many', padding=10)
+        f = ttk.LabelFrame(body, text='How many', padding=10)
         f.grid(row=1, column=0, sticky='nsew', padx=(0, 6), pady=(0, 8))
-        self.field(f, 0, 'Composites per mock-up', self.v_count)
-        self.field(f, 1, 'Mock-ups per image', self.v_objects)
+        ttk.Radiobutton(f, text='Auto-fill from the table size  (recommended)', value='auto',
+                        variable=self.v_mode, command=self.toggle_mode).grid(row=0, column=0, columnspan=3, sticky='w')
+        ttk.Radiobutton(f, text='Fixed number of mock-ups per image', value='fixed',
+                        variable=self.v_mode, command=self.toggle_mode).grid(row=1, column=0, columnspan=3, sticky='w')
+        self.e_total = self.field(f, 2, 'Images to generate', self.v_total)
+        self.e_count = self.field(f, 3, 'Composites per mock-up', self.v_count)
+        self.e_objects = self.field(f, 4, 'Mock-ups per image', self.v_objects)
         ttk.Checkbutton(f, text='Allow the same mock-up twice in one image', variable=self.v_dupes).grid(
-            row=2, column=0, columnspan=3, sticky='w', pady=(4, 0))
-        self.field(f, 3, 'Random seed (optional)', self.v_seed, width=12)
-        self.field(f, 4, 'JPEG quality', self.v_quality, '(70–100)')
-        ttk.Checkbutton(f, text='Save YOLO labels (class = mock-up sub-folder)', variable=self.v_labels).grid(
             row=5, column=0, columnspan=3, sticky='w', pady=(4, 0))
+        self.field(f, 6, 'Random seed (optional)', self.v_seed, width=12)
+        self.field(f, 7, 'JPEG quality', self.v_quality, '(70–100)')
+        ttk.Checkbutton(f, text='Save YOLO labels (class = mock-up sub-folder)', variable=self.v_labels).grid(
+            row=8, column=0, columnspan=3, sticky='w', pady=(4, 0))
 
-        f = ttk.LabelFrame(tab, text='Placement (real-world units)', padding=10)
+        f = ttk.LabelFrame(body, text='Placement (real-world units)', padding=10)
         f.grid(row=1, column=1, sticky='nsew', padx=(6, 0), pady=(0, 8))
         self.field(f, 0, 'Random rotation ±', self.v_rot, 'degrees')
         self.field(f, 1, 'Distance from table edge', self.v_margin, 'cm')
         self.field(f, 2, 'Minimum gap between items', self.v_gap, 'cm')
         self.field(f, 3, 'Size variation ±', self.v_jitter, '%  (0 = exact real size)')
 
-        f = ttk.LabelFrame(tab, text='Realism', padding=10)
+        f = ttk.LabelFrame(body, text='Auto-fill (what goes on each background)', padding=10)
         f.grid(row=2, column=0, columnspan=2, sticky='ew', pady=(0, 8))
+        f.columnconfigure(1, weight=1)
+        left = ttk.Frame(f)
+        left.grid(row=0, column=0, sticky='nw')
+        self.e_fill = self.field(left, 0, 'Cover this much of the table', self.v_fill, '%  of its area')
+        self.e_maxitems = self.field(left, 1, 'Maximum items per image', self.v_maxitems)
+        self.e_boost = self.field(left, 2, 'Priority boost', self.v_boost, '×  (higher = picked more often)')
+        right = ttk.Frame(f)
+        right.grid(row=0, column=1, sticky='nsew', padx=(24, 0))
+        ttk.Label(right, text='Prioritize these classes  (click to select / unselect):').pack(anchor='w')
+        self.lst_prio = tk.Listbox(right, selectmode='multiple', height=4, exportselection=False, activestyle='none',
+                                   relief='flat', highlightthickness=1, highlightbackground='#d1d5db')
+        self.lst_prio.pack(fill='x', pady=(2, 4))
+        self.lst_prio.bind('<<ListboxSelect>>', lambda _e: self.on_prio_select())
+        ttk.Label(right, style='Sub.TLabel', wraplength=380, justify='left',
+                  text='Bigger tables get more items (the real table size decides). Nothing selected = every class '
+                       'equally likely. A mock-up that does not fit the table is never picked, and one that cannot be '
+                       'placed is swapped for a smaller item (e.g. an ID or credit card) instead of causing an error.'
+                  ).pack(anchor='w')
+
+        f = ttk.LabelFrame(body, text='Realism', padding=10)
+        f.grid(row=3, column=0, columnspan=2, sticky='ew', pady=(0, 8))
         ttk.Checkbutton(f, text='Soft contact + ambient shadows', variable=self.v_shadow).grid(row=0, column=0, sticky='w')
         ttk.Checkbutton(f, text='Camera blur & grain', variable=self.v_fx).grid(row=0, column=1, sticky='w', padx=20)
         ttk.Checkbutton(f, text='Match scene lighting / colour, strength', variable=self.v_light).grid(row=0, column=2, sticky='w')
         ttk.Entry(f, textvariable=self.v_strength, width=5).grid(row=0, column=3, padx=6)
         ttk.Label(f, text='%', style='Sub.TLabel').grid(row=0, column=4)
 
-        act = ttk.Frame(tab)
-        act.grid(row=3, column=0, columnspan=2, sticky='ew')
+        act = ttk.Frame(body)
+        act.grid(row=4, column=0, columnspan=2, sticky='ew')
         self.btn_gen = ttk.Button(act, text='▶   Generate composites', style='Accent.TButton', command=self.start_generation)
         self.btn_gen.pack(side='left')
         self.btn_cancel = ttk.Button(act, text='Cancel', command=self.cancel_generation, state='disabled')
@@ -1773,13 +2035,13 @@ class App(tk.Tk):
         ttk.Button(act, text='Open error log', command=self.open_log).pack(side='right')
         ttk.Button(act, text='Open output folder', command=lambda: self.open_out()).pack(side='right', padx=6)
 
-        self.progress = ttk.Progressbar(tab, mode='determinate')
-        self.progress.grid(row=4, column=0, columnspan=2, sticky='ew', pady=(12, 4))
-        self.lbl_status = ttk.Label(tab, text='Ready. Mark your backgrounds first (tab 1), then generate.', style='Sub.TLabel')
-        self.lbl_status.grid(row=5, column=0, columnspan=2, sticky='w')
-        lf = ttk.Frame(tab)
-        lf.grid(row=6, column=0, columnspan=2, sticky='nsew', pady=(8, 0))
-        self.txt = tk.Text(lf, height=8, state='disabled', wrap='word', bg='#111827', fg='#e5e7eb',
+        self.progress = ttk.Progressbar(body, mode='determinate')
+        self.progress.grid(row=5, column=0, columnspan=2, sticky='ew', pady=(12, 4))
+        self.lbl_status = ttk.Label(body, text='Ready. Mark your backgrounds first (tab 1), then generate.', style='Sub.TLabel')
+        self.lbl_status.grid(row=6, column=0, columnspan=2, sticky='w')
+        lf = ttk.Frame(body)
+        lf.grid(row=7, column=0, columnspan=2, sticky='nsew', pady=(8, 0))
+        self.txt = tk.Text(lf, height=10, state='disabled', wrap='word', bg='#111827', fg='#e5e7eb',
                            font=self.mono, relief='flat', padx=8, pady=6)
         sb = ttk.Scrollbar(lf, orient='vertical', command=self.txt.yview)
         self.txt.configure(yscrollcommand=sb.set)
@@ -1788,6 +2050,31 @@ class App(tk.Tk):
         self.txt.tag_configure('ok', foreground='#86efac')
         self.txt.tag_configure('warn', foreground='#fcd34d')
         self.txt.tag_configure('err', foreground='#fca5a5')
+        self.toggle_mode()
+
+    def toggle_mode(self):
+        auto = self.v_mode.get() == 'auto'
+        for w in (self.e_fill, self.e_maxitems, self.e_boost, self.e_total):
+            w.configure(state='normal' if auto else 'disabled')
+        for w in (self.e_count, self.e_objects):
+            w.configure(state='disabled' if auto else 'normal')
+        self.lst_prio.configure(state='normal' if auto else 'disabled')
+
+    def on_prio_select(self):
+        self.priority_sel = {self.known_classes[i] for i in self.lst_prio.curselection()
+                             if i < len(self.known_classes)}
+
+    def refresh_priority_list(self):
+        if not hasattr(self, 'lst_prio'):
+            return
+        st = str(self.lst_prio.cget('state'))
+        self.lst_prio.configure(state='normal')
+        self.lst_prio.delete(0, 'end')
+        for i, n in enumerate(self.known_classes):
+            self.lst_prio.insert('end', n)
+            if n in self.priority_sel:
+                self.lst_prio.selection_set(i)
+        self.lst_prio.configure(state=st)
 
     def log(self, msg, level='info'):
         self.txt.configure(state='normal')
@@ -1819,6 +2106,7 @@ class App(tk.Tk):
                 raise ValueError(f'{label} must be between {lo:g} and {hi:g}.')
             return v
 
+        auto = self.v_mode.get() == 'auto'
         seed = self.v_seed.get().strip()
         if seed:
             try:
@@ -1828,8 +2116,14 @@ class App(tk.Tk):
         return {
             'bg_dir': self.v_bg.get().strip(), 'mock_dir': self.v_mock.get().strip(),
             'out_dir': self.v_out.get().strip(), 'profile_dir': self.v_profiles.get().strip(),
-            'count': num(self.v_count, 'Composites per mock-up', 1, 5000, True),
-            'objects': num(self.v_objects, 'Mock-ups per image', 1, 20, True),
+            'mode': 'auto' if auto else 'fixed',
+            'total': num(self.v_total, 'Images to generate', 1, 100000, True) if auto else 1,
+            'count': 1 if auto else num(self.v_count, 'Composites per mock-up', 1, 5000, True),
+            'objects': 1 if auto else num(self.v_objects, 'Mock-ups per image', 1, 20, True),
+            'fill': num(self.v_fill, 'Table coverage', 1, 90),
+            'max_items': num(self.v_maxitems, 'Maximum items per image', 1, 30, True),
+            'boost': num(self.v_boost, 'Priority boost', 1, 50),
+            'priority': sorted(self.priority_sel),
             'dupes': self.v_dupes.get(),
             'rot': num(self.v_rot, 'Random rotation', 0, 180),
             'margin': num(self.v_margin, 'Distance from table edge', 0, 100),
@@ -1853,6 +2147,8 @@ class App(tk.Tk):
             'shadow': self.v_shadow.get(), 'light': self.v_light.get(), 'strength': self.v_strength.get(),
             'fx': self.v_fx.get(), 'quality': self.v_quality.get(), 'seed': self.v_seed.get(),
             'labels': self.v_labels.get(),
+            'mode': self.v_mode.get(), 'total': self.v_total.get(), 'fill': self.v_fill.get(),
+            'max_items': self.v_maxitems.get(), 'boost': self.v_boost.get(), 'priority': sorted(self.priority_sel),
             'sizes': self.sizes,
         }
         try:
